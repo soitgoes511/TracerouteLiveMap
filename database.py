@@ -3,6 +3,10 @@ import time
 import threading
 
 class DatabaseService:
+    """
+    Handles SQLite database interactions for connections and latency history.
+    """
+    
     def __init__(self, db_path="nettrace.db", app=None):
         self.db_path = db_path
         self.app = app
@@ -10,9 +14,11 @@ class DatabaseService:
         self.init_db()
 
     def get_connection(self):
+        """Creates a new database connection."""
         return sqlite3.connect(self.db_path)
 
     def init_db(self):
+        """Initializes the database schema if tables do not exist."""
         with self._lock:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -55,6 +61,15 @@ class DatabaseService:
             conn.close()
 
     def update_connection(self, ip, port=None, protocol=None, geo_data=None):
+        """
+        Updates or inserts connection details.
+        
+        Args:
+            ip (str): IP address.
+            port (int): Port number.
+            protocol (str): Protocol name.
+            geo_data (dict): Geolocation information.
+        """
         with self._lock, self.app.app_context():
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -110,6 +125,7 @@ class DatabaseService:
             conn.close()
 
     def add_latency_sample(self, ip, rtt):
+        """Adds a new latency (RTT) sample for a connection."""
         with self._lock, self.app.app_context():
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -118,6 +134,7 @@ class DatabaseService:
             conn.close()
 
     def get_all_connections(self):
+        """Returns all connections from the database."""
         # Read-only, no lock strictly needed but good practice if mixed with writes
         conn = self.get_connection()
         conn.row_factory = sqlite3.Row
@@ -132,6 +149,12 @@ class DatabaseService:
         return results
 
     def get_latency_history(self, ip, limit=20):
+        """
+        Retrieves recent latency history for an IP.
+        
+        Returns:
+            list: List of dicts [{'rtt': float, 'timestamp': float}]
+        """
         conn = self.get_connection()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -143,6 +166,12 @@ class DatabaseService:
         return [{"rtt": row['rtt'], "timestamp": row['timestamp']} for row in rows][::-1]
 
     def clear_history(self, older_than_seconds=None):
+        """
+        Clears history data.
+        
+        Args:
+            older_than_seconds (int, optional): If set, only clears data older than this age.
+        """
         with self._lock, self.app.app_context():
             conn = self.get_connection()
             cursor = conn.cursor()

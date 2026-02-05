@@ -17,16 +17,24 @@ monitor = ConnectionMonitor(socketio, traceroute_engine, app, db_service)
 
 @app.route('/')
 def index():
+    """Renders the main dashboard page."""
     return render_template('index.html')
 
 @socketio.on('connect')
 def handle_connect():
+    """Handles new client connections via SocketIO."""
     print('Client connected')
     # Send initial data if available or trigger a scan
     monitor.trigger_scan()
 
 @socketio.on('clear_history')
 def handle_clear_history(data):
+    """
+    Handles request to clear connection history from the database.
+    
+    Args:
+        data (dict): May contain 'older_than' (int) in seconds.
+    """
     # data can be {'older_than': 86400} or empty for all
     older_than = data.get('older_than')
     db_service.clear_history(older_than)

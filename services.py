@@ -6,6 +6,8 @@ from icmplib import traceroute as icmp_traceroute, multiping
 from collections import deque
 
 class GeoIPService:
+    """Service to handle IP geolocation requests with rate limiting."""
+    
     def __init__(self):
         self.cache = {}
         self.request_timestamps = deque()
@@ -13,6 +15,7 @@ class GeoIPService:
         self.WINDOW = 60 # seconds
 
     def _can_make_request(self):
+        """Checks if a new request is allowed under the rate limit."""
         now = time.time()
         while self.request_timestamps and self.request_timestamps[0] < now - self.WINDOW:
             self.request_timestamps.popleft()
@@ -20,6 +23,15 @@ class GeoIPService:
         return len(self.request_timestamps) < self.RATE_LIMIT
 
     def get_location(self, ip):
+        """
+        Fetches geolocation data for an IP address.
+        
+        Args:
+            ip (str): The IP address to locate.
+            
+        Returns:
+            dict: Location data (lat, lon, etc.) or error info.
+        """
         # Quick filter for private ranges
         if ip.startswith('192.168.') or ip.startswith('10.') or ip.startswith('127.'):
             return None
@@ -53,6 +65,7 @@ class GeoIPService:
         return None
     
     def get_rate_limit_status(self):
+         """Returns current rate limit status (requests remaining)."""
          now = time.time()
          while self.request_timestamps and self.request_timestamps[0] < now - self.WINDOW:
             self.request_timestamps.popleft()
@@ -62,6 +75,8 @@ class GeoIPService:
          }
 
 class TracerouteEngine:
+    """Handles background traceroute operations using ICMP."""
+    
     def __init__(self, socketio, geo_service, app, db):
         self.socketio = socketio
         self.geo_service = geo_service
@@ -72,14 +87,17 @@ class TracerouteEngine:
         self.running = False
 
     def add_target(self, ip):
+        """Adds a new IP to the traceroute queue."""
         if ip not in self.processed_ips and ip not in self.queue:
             self.queue.append(ip)
 
     def start(self):
+        """Starts the background traceroute worker."""
         self.running = True
         self.socketio.start_background_task(self._run)
 
     def _run(self):
+        """Main worker loop processing the queue."""
         with self.app.app_context():
             while self.running:
                 if self.queue:
@@ -90,6 +108,12 @@ class TracerouteEngine:
                     self.socketio.sleep(1)
 
     def perform_traceroute(self, target_ip):
+        """
+        Executes a traceroute to the target IP and emits results.
+        
+        Args:
+            target_ip (str): Destination IP Address.
+        """
         print(f"Tracerouting {target_ip}...")
         try:
             hops = icmp_traceroute(target_ip, count=1, interval=0.05, timeout=1, max_hops=20, fast=True)
@@ -133,6 +157,8 @@ class TracerouteEngine:
             print(f"Traceroute failed for {target_ip}: {e}")
 
 class ConnectionMonitor:
+    """Monitors active system connections and triggers updates."""
+    
     def __init__(self, socketio, traceroute_engine, app, db):
         self.socketio = socketio
         self.traceroute_engine = traceroute_engine
@@ -142,11 +168,18 @@ class ConnectionMonitor:
         self.seen_connections = set()
 
     def start(self):
+        """Starts the monitoring background tasks."""
         self.running = True
         self.socketio.start_background_task(self._monitor_loop)
         self.socketio.start_background_task(self._rate_limit_emitter)
 
     def _monitor_loop(self):
+        """
+        Background loop that:
+        1. Loads history from DB.
+        2. Periodically scans for new connections.
+        3. Measures latency for active connections.
+        """
         with self.app.app_context():
             # Load existing connections from DB on start
             history = self.db.get_all_connections()
@@ -172,6 +205,7 @@ class ConnectionMonitor:
                 self.socketio.sleep(2) # Faster updates
 
     def measure_latencies(self):
+        """Sends ICMP pings to all active targets to get live RTT."""
         if not self.seen_connections:
             return
 
@@ -190,6 +224,7 @@ class ConnectionMonitor:
             print(f"Latency measure error: {e}")
 
     def _rate_limit_emitter(self):
+        """Emits GeoIP rate limit status to frontend periodically."""
         with self.app.app_context():
             while self.running:
                 status = self.traceroute_engine.geo_service.get_rate_limit_status()
@@ -197,9 +232,11 @@ class ConnectionMonitor:
                 self.socketio.sleep(1)
 
     def trigger_scan(self):
+        """Manually triggers a connection scan."""
         self.socketio.start_background_task(self.scan)
 
     def _identify_protocol(self, port):
+        """Maps port numbers to common protocol names."""
         common_ports = {
             80: 'HTTP', 443: 'HTTPS', 22: 'SSH', 53: 'DNS', 
             21: 'FTP', 25: 'SMTP', 3306: 'MySQL', 5432: 'PostgreSQL',
@@ -208,6 +245,7 @@ class ConnectionMonitor:
         return common_ports.get(port, 'TCP')
 
     def scan(self):
+        """Scans system connections using psutil."""
         try:
             connections = psutil.net_connections(kind='inet')
             active_remote_ips = set()
