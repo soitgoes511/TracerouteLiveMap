@@ -74,6 +74,16 @@ class GeoIPService:
              "reset_in": int(self.WINDOW - (now - self.request_timestamps[0])) if self.request_timestamps else 0
          }
 
+    def get_own_location(self):
+        """Fetches the public IP and location of the host machine."""
+        try:
+            # First get public IP
+            ip = requests.get('https://api.ipify.org', timeout=3).text
+            return self.get_location(ip)
+        except Exception as e:
+            print(f"Failed to get own location: {e}")
+            return None
+
 class TracerouteEngine:
     """Handles background traceroute operations using ICMP."""
     
@@ -85,6 +95,7 @@ class TracerouteEngine:
         self.queue = deque()
         self.processed_ips = set()
         self.running = False
+        self.my_location = None
 
     def add_target(self, ip):
         """Adds a new IP to the traceroute queue."""
@@ -93,6 +104,13 @@ class TracerouteEngine:
 
     def start(self):
         """Starts the background traceroute worker."""
+        # Try to get own location once on start
+        try:
+             self.my_location = self.geo_service.get_own_location()
+             print(f"Determined own location: {self.my_location.get('city') if self.my_location else 'Unknown'}")
+        except:
+             pass
+
         self.running = True
         self.socketio.start_background_task(self._run)
 
@@ -116,9 +134,13 @@ class TracerouteEngine:
         """
         print(f"Tracerouting {target_ip}...")
         try:
-            hops = icmp_traceroute(target_ip, count=1, interval=0.05, timeout=1, max_hops=20, fast=True)
+            # Tuned for better reliability on Windows: fast=False (sequential), longer timeout
+            hops = icmp_traceroute(target_ip, count=1, interval=0.1, timeout=2, max_hops=20, fast=False)
             
+            print(f"Traceroute to {target_ip}: Found {len(hops)} hops")
             path_data = []
+            
+            # Re-construct path including hops
             for hop in hops:
                 hop_info = {
                     'distance': hop.distance,
@@ -133,8 +155,8 @@ class TracerouteEngine:
             
             final_geo = self.geo_service.get_location(target_ip)
             
-            # Persist Latency Sample (using the RTT of the last successful hop or a specific ping if needed)
-            # icmplib traceroute gives avg_rtt for each hop. The last hop represents the target RTT if reached.
+            # ... (DB updates omitted for brevity, logic remains same)
+            # Persist Latency Sample
             if hops:
                 last_hop = hops[-1]
                 if last_hop.address == target_ip:
@@ -148,8 +170,8 @@ class TracerouteEngine:
                 'target': target_ip,
                 'path': path_data,
                 'target_geo': final_geo,
+                'source_geo': self.my_location, # Send source location
                 'latest_rtt': hops[-1].avg_rtt if hops and hops[-1].address == target_ip else None,
-                # Send history for sparkline
                 'latency_history': self.db.get_latency_history(target_ip)
             })
             
