@@ -1,7 +1,5 @@
 flask
 flask-socketio
-flask
-flask-socketio
 psutil
 icmplib
 requests
