@@ -130,6 +130,8 @@ socket.on('traceroute_result', (data) => {
     connections[target].info.status = 'traced';
     connections[target].info.path = data.path;
 
+    connections[target].info.source_geo = data.source_geo; // Store source geo
+
     connections[target].info.latest_rtt = data.latest_rtt;
 
     updateSidebarItem(target, data.latency_history);
@@ -222,6 +224,14 @@ function updateViz(ip) {
     var layerGroup = L.layerGroup();
     var latlngs = [];
 
+    // Start from Source if available and path is sparse
+    if (info.source_geo && (!info.path || info.path.length < 2)) {
+        latlngs.push([info.source_geo.lat, info.source_geo.lon]);
+        L.circleMarker([info.source_geo.lat, info.source_geo.lon], {
+            color: '#238636', fillColor: '#238636', fillOpacity: 0.9, radius: 6
+        }).bindPopup(`<b>My Location</b><br>${info.source_geo.city || 'Home'}`).addTo(layerGroup);
+    }
+
     // Path
     if (info.path) {
         info.path.forEach(hop => {
@@ -280,12 +290,17 @@ function updateGlobeData() {
                 color: '#58a6ff'
             });
 
+            // Determine Start Point
+            let prevLat = null, prevLon = null;
+            if (c.info.source_geo) {
+                prevLat = c.info.source_geo.lat;
+                prevLon = c.info.source_geo.lon;
+                // Add User Home Point if not already there (optimize this later)
+                points.push({ lat: prevLat, lng: prevLon, size: 0.6, color: '#238636' });
+            }
+
             // Draw full path if available
             if (c.info.path && c.info.path.length > 0) {
-                let prevLat = null, prevLon = null;
-                // Try to find first valid hop
-                // If path[0] has lat/lon
-
                 c.info.path.forEach(hop => {
                     if (hop.lat && hop.lon) {
                         if (prevLat !== null) {
@@ -300,18 +315,15 @@ function updateGlobeData() {
                         points.push({ lat: hop.lat, lng: hop.lon, size: 0.2, color: '#8b949e' });
                     }
                 });
+            }
 
-                // Last hop to target
-                if (prevLat !== null) {
-                    arcs.push({
-                        startLat: prevLat, startLng: prevLon,
-                        endLat: c.info.geo.lat, endLng: c.info.geo.lon,
-                        color: '#58a6ff'
-                    });
-                }
-            } else {
-                // Direct arc if no path (e.g. from history)
-                // Just draw point, maybe no arc to avoid clutter
+            // Last Leg: From last valid hop (or Source) to Target
+            if (prevLat !== null) {
+                arcs.push({
+                    startLat: prevLat, startLng: prevLon,
+                    endLat: c.info.geo.lat, endLng: c.info.geo.lon,
+                    color: '#58a6ff'
+                });
             }
         }
     });
